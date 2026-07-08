@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>松莞全景</title>
+<link rel="stylesheet" href="https://fastly.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+    background: #0a0a0a; color: #f0f0f0;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    height: 100vh; display: flex; flex-direction: column; overflow: hidden;
+}
+.header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 20px; background: rgba(20,20,20,0.95);
+    backdrop-filter: blur(10px); z-index: 100; min-height: 48px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.header h1 { font-size: 18px; font-weight: 600; }
+#viewer-wrap { flex: 1; position: relative; width: 100%; }
+
+/* Two layers */
+#layer-a, #layer-b {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+}
+#layer-a { z-index: 1; }
+#layer-b { z-index: 2; opacity: 0; pointer-events: none; }
+#layer-b.active { opacity: 1; pointer-events: auto; }
+
+/* Signature scene */
+#sig-scene {
+    display: none; position: absolute; inset: 0; z-index: 5;
+    background: linear-gradient(180deg, #06060f 0%, #0a0a1a 40%, #0f0a1e 100%);
+    overflow: hidden;
+}
+#sig-stars {
+    position: absolute; inset: 0; pointer-events: none;
+}
+
+/* Falling text item — 纯 CSS，和 910.pages.dev 一样 */
+.sig-fall {
+    position: fixed;
+    font-weight: 600;
+    color: rgba(200, 220, 255, 0.75);
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 6;
+    text-shadow: 0 0 10px rgba(100, 180, 255, 0.3);
+    will-change: top, transform;
+    animation: sig-fall-anim var(--fall-dur) linear forwards,
+               sig-sway 3s ease-in-out infinite;
+}
+@keyframes sig-fall-anim {
+    from { top: -60px; opacity: 0; }
+    10%  { opacity: 1; }
+    85%  { opacity: 1; }
+    to   { top: calc(100vh + 20px); opacity: 0; }
+}
+@keyframes sig-sway {
+    0%, 100% { transform: translateX(0); }
+    50%      { transform: translateX(var(--sway)); }
+}
+
+/* Visitor badge */
+#visitor-badge {
+    position: absolute; top: 10px; right: 56px; z-index: 90;
+    background: rgba(0,0,0,0.55); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+    padding: 6px 14px; display: none; align-items: center; gap: 6px;
+    font-size: 13px; color: rgba(255,255,255,0.75);
+}
+#visitor-badge .v-count { color: #4fc3f7; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Message form */
+#msg-form {
+    position: absolute; bottom: 12px; right: 12px; z-index: 90;
+    display: none; gap: 6px; align-items: center;
+}
+#msg-input {
+    width: 200px; padding: 8px 14px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.18);
+    background: rgba(0,0,0,0.55); backdrop-filter: blur(8px);
+    color: #fff; font-size: 14px; outline: none;
+    transition: border-color 0.2s;
+}
+#msg-input:focus { border-color: #4fc3f7; }
+#msg-input::placeholder { color: rgba(255,255,255,0.3); }
+#msg-submit {
+    padding: 8px 18px; border-radius: 8px; border: none;
+    background: #4fc3f7; color: #000; font-size: 14px;
+    font-weight: 600; cursor: pointer; transition: all 0.2s;
+    white-space: nowrap;
+}
+#msg-submit:hover { background: #81d4fa; transform: translateY(-1px); }
+#msg-submit:active { transform: translateY(0); }
+#msg-toast {
+    position: absolute; bottom: 56px; right: 12px; z-index: 90;
+    background: rgba(76,175,80,0.85); backdrop-filter: blur(8px);
+    color: #fff; padding: 6px 16px; border-radius: 8px;
+    font-size: 13px; opacity: 0; transition: opacity 0.3s;
+    pointer-events: none;
+}
+#msg-toast.show { opacity: 1; }
+
+/* Checkerboard loading screen */
+#load-screen {
+    position: absolute; inset: 0; z-index: 50;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 20px;
+    background: repeating-conic-gradient(#1a1a1a 0% 25%, #222 0% 50%) 50% / 20px 20px;
+    transition: opacity 0.5s;
+}
+#load-screen.hidden { opacity: 0; pointer-events: none; }
+#load-screen h2 { font-size: 20px; font-weight: 600; }
+#load-screen .bar-bg {
+    width: 320px; height: 8px;
+    background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden;
+}
+#load-screen .bar-fill {
+    height: 100%; width: 0; background: #4fc3f7;
+    border-radius: 4px; transition: width 0.3s;
+}
+#load-screen .stats {
+    font-size: 13px; color: rgba(255,255,255,0.5);
+    display: flex; gap: 20px;
+}
+#load-screen .stats span { display: flex; align-items: center; gap: 4px; }
+#load-screen .skip-btn {
+    margin-top: 8px; padding: 8px 24px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.7); font-size: 14px; cursor: pointer;
+    backdrop-filter: blur(8px); transition: all 0.2s; display: none;
+}
+#load-screen .skip-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
+#load-screen .items {
+    display: flex; gap: 12px; margin-top: 8px;
+}
+#load-screen .item {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    font-size: 11px; color: rgba(255,255,255,0.4);
+}
+#load-screen .item .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.1);
+    transition: background 0.3s;
+}
+#load-screen .item .dot.done { background: #4caf50; }
+.spinner-lg {
+    width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.15);
+    border-top-color: #4fc3f7; border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Controls */
+.controls { position: absolute; top: 10px; right: 10px; z-index: 80; display: flex; gap: 6px; }
+.ctrl-btn {
+    width: 36px; height: 36px; border-radius: 8px;
+    background: rgba(0,0,0,0.5); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #fff; font-size: 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: all 0.2s;
+}
+.ctrl-btn:hover { background: rgba(0,0,0,0.7); }
+.ctrl-btn.active { background: #4fc3f7; border-color: #4fc3f7; color: #000; }
+
+/* Thumb bar */
+.thumb-bar {
+    display: flex; gap: 8px; padding: 10px 16px;
+    background: rgba(20,20,20,0.95); backdrop-filter: blur(10px);
+    overflow-x: auto; z-index: 100;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.2) transparent;
+}
+.thumb-bar::-webkit-scrollbar { height: 4px; }
+.thumb-bar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 2px; }
+.thumb-item {
+    flex-shrink: 0; cursor: pointer; border-radius: 8px;
+    overflow: hidden; border: 2px solid transparent;
+    transition: all 0.3s; position: relative; width: 120px; height: 68px;
+}
+.thumb-item:hover { border-color: rgba(255,255,255,0.4); transform: translateY(-2px); }
+.thumb-item.active { border-color: #4fc3f7; box-shadow: 0 0 10px #4fc3f740; }
+.thumb-item img { width: 100%; height: 100%; object-fit: cover; }
+.thumb-item .thumb-label {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    padding: 2px 6px; font-size: 10px; color: #fff;
+    background: linear-gradient(transparent, rgba(0,0,0,0.7));
+    text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.thumb-item .thumb-dot {
+    position: absolute; top: 4px; right: 4px;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #f44336; border: 1px solid rgba(0,0,0,0.3);
+    transition: background 0.3s;
+}
+.thumb-item .thumb-dot.ready { background: #4caf50; }
+
+.scene-counter {
+    position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+    background: rgba(0,0,0,0.5); backdrop-filter: blur(8px);
+    padding: 4px 14px; border-radius: 20px;
+    font-size: 12px; color: rgba(255,255,255,0.7); z-index: 80;
+}
+
+@media (max-width: 600px) {
+    .thumb-item { width: 90px; height: 52px; }
+    .header h1 { font-size: 15px; }
+    #load-screen .bar-bg { width: 240px; }
+    #load-screen .stats { flex-direction: column; gap: 4px; }
+    #msg-input { width: 140px; font-size: 13px; padding: 6px 10px; }
+    #msg-submit { padding: 6px 12px; font-size: 13px; }
+    #visitor-badge { right: 48px; font-size: 12px; padding: 4px 10px; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>松莞全景</h1>
+</div>
+
+<div id="viewer-wrap">
+    <div id="layer-a"></div>
+    <div id="layer-b"></div>
+
+    <!-- Signature scene -->
+    <div id="sig-scene">
+        <canvas id="sig-stars"></canvas>
+    </div>
+    <div id="visitor-badge">
+        👁 访问 <span class="v-count" id="visitor-count">0</span> 次
+    </div>
+    <div id="msg-form">
+        <input id="msg-input" type="text" placeholder="留下你的签名..." maxlength="50" />
+        <button id="msg-submit">提交</button>
+    </div>
+    <div id="msg-toast">✓ 已添加</div>
+
+    <!-- Checkerboard loading screen -->
+    <div id="load-screen">
+        <div class="spinner-lg"></div>
+        <h2>加载全景中</h2>
+        <div class="bar-bg"><div class="bar-fill" id="load-bar"></div></div>
+        <div class="stats">
+            <span id="load-pct">0%</span>
+            <span id="load-size">0 / 0 MB</span>
+            <span id="load-detail">准备中...</span>
+        </div>
+        <div class="items" id="load-items"></div>
+        <button class="skip-btn" id="load-skip" onclick="skipLoading()">跳过加载，进入签名墙</button>
+    </div>
+
+    <div class="controls">
+        <button class="ctrl-btn" id="btn-rotate" title="自动旋转 (R)" onclick="toggleRotate()">⟳</button>
+        <button class="ctrl-btn" id="btn-fullscreen" title="全屏 (F)" onclick="toggleFullscreen()">⛶</button>
+    </div>
+    <div class="scene-counter" id="scene-counter"></div>
+</div>
+
+<div class="thumb-bar" id="thumb-bar"></div>
+
+<script src="https://fastly.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+<script src="https://fastly.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+console.log('[松莞全景] 脚本开始执行');
+console.log('[松莞全景] pannellum:', typeof pannellum !== 'undefined' ? '✓ 已加载' : '✗ 未加载');
+console.log('[松莞全景] supabase:', typeof supabase !== 'undefined' ? '✓ 已加载' : '✗ 未加载');
+
+// 10秒后显示跳过按钮，15秒后自动跳过
+setTimeout(function() {
+    var btn = document.getElementById('load-skip');
+    if (btn && !btn.dataset.used) btn.style.display = 'inline-block';
+}, 10000);
+setTimeout(function() {
+    if (currentIndex === 0 && document.getElementById('load-screen').classList.contains('hidden')) return;
+    console.log('[松莞全景] 加载超时，自动进入签名墙');
+    skipLoading();
+}, 15000);
+
+function skipLoading() {
+    var btn = document.getElementById('load-skip');
+    if (btn) btn.dataset.used = '1';
+    loadScene(0);
+}
+
+// ═══════════════════════════════════════════
+//  Supabase 配置
+// ═══════════════════════════════════════════
+const SUPABASE_URL  = 'https://wevrvbolhntrcofeelqt.supabase.co';
+const SUPABASE_KEY  = 'sb_publishable_GROj-f8SVAqOcdLlPijrVw_f665NmBC';
+
+let db = null;
+let useSupabase = false;
+
+try {
+    if (SUPABASE_URL !== 'https://YOUR_PROJECT.supabase.co' && typeof supabase !== 'undefined') {
+        db = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        useSupabase = true;
+    }
+} catch (e) { console.warn('Supabase init failed, using localStorage:', e); }
+
+// ─── Scene definitions (dynamic from scenes.json) ───
+const MAX_DIM = 8192;
+const JPEG_QUALITY = 0.92;
+
+let scenes = [];
+let viewerA = null, viewerB = null;
+let activeLayer = 'a';
+let currentIndex = 0, isRotating = false, firstShown = false;
+let totalRawSize = 0, totalCompSize = 0;
+
+async function loadSceneManifest() {
+    try {
+        const res = await fetch('scenes.json?t=' + Date.now());
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const manifest = await res.json();
+        if (!Array.isArray(manifest) || manifest.length === 0) throw new Error('empty manifest');
+        return manifest.map((m, i) => ({
+            id: 's' + i,
+            title: m.title || ('场景 ' + (i + 1)),
+            src: m.src || null,
+            type: m.type || 'panorama',
+            blobUrl: null, ready: false, rawSize: 0, compSize: 0
+        }));
+    } catch (e) {
+        console.warn('[松莞全景] scenes.json 加载失败，尝试目录自动发现:', e);
+        return null;
+    }
+}
+
+async function autoDiscoverImages() {
+    // 尝试从目录列表中发现图片（GitHub Pages 支持）
+    const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.webp'];
+    try {
+        const res = await fetch('./?t=' + Date.now());
+        if (!res.ok) throw new Error('no directory listing');
+        const html = await res.text();
+        const found = [];
+        // 解析目录列表中的链接
+        const regex = /href=["']([^"']+)["']/gi;
+        let match;
+        while ((match = regex.exec(html)) !== null) {
+            const href = match[1].split('?')[0].split('#')[0];
+            const lower = href.toLowerCase();
+            if (IMAGE_EXTS.some(ext => lower.endsWith(ext)) && !lower.includes('thumbnail')) {
+                found.push(href);
+            }
+        }
+        if (found.length > 0) {
+            found.sort();
+            console.log('[松莞全景] 自动发现', found.length, '张图片');
+            return found.map((src, i) => ({
+                id: 's' + i,
+                title: '场景 ' + (i + 1),
+                src: src,
+                type: 'panorama',
+                blobUrl: null, ready: false, rawSize: 0, compSize: 0
+            }));
+        }
+    } catch (e) {
+        console.warn('[松莞全景] 目录自动发现失败:', e);
+    }
+    return null;
+}
+
+async function initScenes() {
+    // 优先从 scenes.json 加载
+    let loaded = await loadSceneManifest();
+    // 其次尝试目录自动发现
+    if (!loaded) loaded = await autoDiscoverImages();
+    // 最终兜底：空列表
+    if (!loaded) {
+        console.error('[松莞全景] 无法加载任何场景');
+        loaded = [];
+    }
+    // 签名墙始终插入为第一个场景
+    scenes = [
+        { id: 's-sign', title: '签名墙', type: 'signature', src: null, blobUrl: null, ready: true, rawSize: 0, compSize: 0 },
+        ...loaded
+    ];
+    console.log('[松莞全景] 场景数:', scenes.length, scenes.map(s => s.title));
+    return scenes;
+}
+
+// ─── Storage ───
+const MSG_KEY = 'sig-wall-messages';
+const DEFAULT_SIG_MSGS = ['欢迎来到松莞全景', '一起记录美好时刻', '留下你的名字吧'];
+
+function getMessagesLocal() {
+    try { return JSON.parse(localStorage.getItem(MSG_KEY) || '[]'); }
+    catch { return []; }
+}
+function saveMessagesLocal(msgs) {
+    localStorage.setItem(MSG_KEY, JSON.stringify(msgs));
+}
+
+async function fetchMessages() {
+    if (useSupabase) {
+        try {
+            const { data, error } = await db.from('messages')
+                .select('content')
+                .order('created_at', { ascending: true })
+                .limit(200);
+            if (!error && data) {
+                const msgs = data.map(r => r.content);
+                saveMessagesLocal(msgs);
+                return msgs;
+            }
+        } catch (e) { console.warn('Supabase fetch failed:', e); }
+    }
+    return getMessagesLocal();
+}
+
+async function insertMessage(text) {
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+    if (useSupabase) {
+        try {
+            const { error } = await db.from('messages').insert({ content: trimmed });
+            if (!error) {
+                const msgs = await fetchMessages();
+                saveMessagesLocal(msgs);
+                return true;
+            }
+        } catch (e) { console.warn('Supabase insert failed:', e); }
+    }
+    const msgs = getMessagesLocal();
+    msgs.push(trimmed);
+    if (msgs.length > 200) msgs.splice(0, msgs.length - 200);
+    saveMessagesLocal(msgs);
+    return true;
+}
+
+// ─── Signature scene state ───
+var sigReady = false;
+var sigActive = false;
+var sigMsgQueue = [];
+var sigIntervalId = null;
+var updateSigMsgs = null;
+
+// ─── Build load-items dots ───
+function buildLoadItems() {
+    var el = document.getElementById('load-items');
+    el.innerHTML = '';
+    scenes.forEach(function(s, i) {
+        var item = document.createElement('div');
+        item.className = 'item';
+        item.innerHTML = '<div class="dot" id="ldot-' + i + '"></div><span>' + s.title + '</span>';
+        el.appendChild(item);
+    });
+}
+
+// ─── Update load screen ───
+function updateLoadUI(idx, rawSize, compSize) {
+    var done = scenes.filter(function(s) { return s.ready; }).length;
+    var total = scenes.length;
+    var pct = Math.round(done / total * 100);
+
+    document.getElementById('load-bar').style.width = pct + '%';
+    document.getElementById('load-pct').textContent = pct + '%';
+
+    totalRawSize += rawSize;
+    totalCompSize += compSize;
+    document.getElementById('load-size').textContent =
+        (totalCompSize/1024/1024).toFixed(1) + ' / ' + (totalRawSize/1024/1024).toFixed(1) + ' MB';
+
+    if (compSize > 0) {
+        document.getElementById('load-detail').textContent =
+            scenes[idx].title + ' 完成 · ' + (compSize/1024/1024).toFixed(1) + ' MB';
+    }
+
+    var dot = document.getElementById('ldot-' + idx);
+    if (dot) dot.classList.add('done');
+
+    scenes.forEach(function(s, i) {
+        var td = document.querySelector('.thumb-item[data-idx="' + i + '"] .thumb-dot');
+        if (td) td.classList.toggle('ready', s.ready);
+    });
+
+    if (done === total) {
+        document.getElementById('load-detail').textContent = '全部就绪！';
+        setTimeout(function() { document.getElementById('load-screen').classList.add('hidden'); }, 600);
+    }
+}
+
+// ─── Compress ───
+function compress(rawBlob, cb) {
+    var img = new Image();
+    var url = URL.createObjectURL(rawBlob);
+    img.onload = function() {
+        var w = img.width, h = img.height;
+        if (Math.max(w,h) > MAX_DIM) { var s = MAX_DIM/Math.max(w,h); w=Math.round(w*s); h=Math.round(h*s); }
+        var c = document.createElement('canvas');
+        c.width=w; c.height=h;
+        c.getContext('2d').drawImage(img,0,0,w,h);
+        URL.revokeObjectURL(url);
+        c.toBlob(function(b) {
+            if (b) cb(URL.createObjectURL(b), b.size);
+            else cb(null, 0);
+        }, 'image/jpeg', JPEG_QUALITY);
+    };
+    img.onerror = function() { URL.revokeObjectURL(url); cb(null, 0); };
+    img.src = url;
+}
+
+// ─── Load all ───
+function loadAll() {
+    console.log('[松莞全景] loadAll() 开始');
+    var doneCount = 0;
+    scenes.forEach(function(scene, i) {
+        if (!scene.src) {
+            scene.ready = true;
+            doneCount++;
+            updateLoadUI(i, 0, 0);
+            if (i === 0 && !firstShown) { firstShown = true; loadScene(0); }
+            return;
+        }
+        fetch(scene.src)
+            .then(function(r) { console.log('[松莞全景] fetch 成功:', scene.title, r.status); return r.blob(); })
+            .then(function(raw) {
+                scene.rawSize = raw.size;
+                compress(raw, function(url, size) {
+                    scene.compSize = size;
+                    if (url) { scene.blobUrl = url; scene.ready = true; }
+                    doneCount++;
+                    updateLoadUI(i, raw.size, size);
+                    if (i === 0 && url && !firstShown) { firstShown = true; loadScene(0); }
+                });
+            })
+            .catch(function(err) {
+                console.error('[松莞全景] fetch 失败:', scene.title, err);
+                doneCount++;
+                updateLoadUI(i, 0, 0);
+            });
+    });
+}
+
+// ─── Build Thumbnails ───
+function buildThumbs() {
+    var bar = document.getElementById('thumb-bar');
+    bar.innerHTML = '';
+    scenes.forEach(function(s, i) {
+        var item = document.createElement('div');
+        item.className = 'thumb-item' + (i===currentIndex?' active':'');
+        item.dataset.idx = i;
+        item.onclick = function() { loadScene(i); };
+
+        if (s.src) {
+            var img = document.createElement('img');
+            img.src = s.src; img.alt = s.title; img.loading = 'lazy';
+            item.appendChild(img);
+        } else {
+            item.style.background = 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)';
+            item.style.display = 'flex';
+            item.style.alignItems = 'center';
+            item.style.justifyContent = 'center';
+            var icon = document.createElement('span');
+            icon.style.fontSize = '24px';
+            icon.textContent = '✍️';
+            item.appendChild(icon);
+        }
+
+        var label = document.createElement('div');
+        label.className = 'thumb-label'; label.textContent = s.title;
+        item.appendChild(label);
+
+        var dot = document.createElement('div');
+        dot.className = 'thumb-dot';
+        item.appendChild(dot);
+
+        bar.appendChild(item);
+    });
+}
+
+// ─── Load scene ───
+function loadScene(index) {
+    console.log('[松莞全景] loadScene(' + index + ')');
+    if (index < 0 || index >= scenes.length) { console.warn('[松莞全景] 无效场景索引:', index); return; }
+    var scene = scenes[index];
+    currentIndex = index;
+    if (!scene.ready) { console.warn('[松莞全景] 场景未就绪:', scene.title); return; }
+
+    if (scene.type === 'signature') {
+        if (viewerA) { try{viewerA.destroy();}catch(e){} viewerA = null; }
+        if (viewerB) { try{viewerB.destroy();}catch(e){} viewerB = null; }
+        document.getElementById('layer-a').classList.remove('active');
+        document.getElementById('layer-b').classList.remove('active');
+        document.getElementById('sig-scene').style.display = 'block';
+        document.getElementById('visitor-badge').style.display = 'flex';
+        document.getElementById('msg-form').style.display = 'flex';
+        document.querySelector('.controls').style.display = 'none';
+        document.getElementById('load-screen').classList.add('hidden');
+        if (!sigReady) initSigScene(); else startSigLoop();
+        initVisitorCount();
+    } else {
+        stopSigLoop();
+        document.getElementById('sig-scene').style.display = 'none';
+        document.getElementById('visitor-badge').style.display = 'none';
+        document.getElementById('msg-form').style.display = 'none';
+        document.querySelector('.controls').style.display = 'flex';
+        if (typeof pannellum === 'undefined') {
+            console.error('[松莞全景] Pannellum 未加载');
+            alert('全景查看器加载失败，请检查网络后刷新页面');
+            return;
+        }
+
+        var targetLayer = activeLayer === 'a' ? 'b' : 'a';
+        var targetId = targetLayer === 'a' ? 'layer-a' : 'layer-b';
+
+        if (targetLayer === 'a' && viewerA) { try{viewerA.destroy();}catch(e){} viewerA = null; }
+        if (targetLayer === 'b' && viewerB) { try{viewerB.destroy();}catch(e){} viewerB = null; }
+
+        var v = pannellum.viewer(targetId, {
+            type: 'equirectangular',
+            panorama: scene.blobUrl,
+            autoLoad: true,
+            showControls: false,
+            compass: true,
+            hfov: 110, minHfov: 50, maxHfov: 120
+        });
+
+        if (targetLayer === 'a') viewerA = v; else viewerB = v;
+
+        v.on('load', function() {
+            document.getElementById('layer-' + targetLayer).classList.add('active');
+            document.getElementById('layer-' + activeLayer).classList.remove('active');
+            activeLayer = targetLayer;
+            setTimeout(function() {
+                var oldLayer = targetLayer === 'a' ? 'b' : 'a';
+                if (oldLayer === 'a' && viewerA && targetLayer !== 'a') { try{viewerA.destroy();}catch(e){} viewerA=null; }
+                if (oldLayer === 'b' && viewerB && targetLayer !== 'b') { try{viewerB.destroy();}catch(e){} viewerB=null; }
+            }, 700);
+        });
+    }
+
+    document.querySelectorAll('.thumb-item').forEach(function(el,i) { el.classList.toggle('active', i===index); });
+    var active = document.querySelector('.thumb-item[data-idx="' + index + '"]');
+    if (active) active.scrollIntoView({behavior:'smooth', block:'nearest', inline:'center'});
+    document.getElementById('scene-counter').textContent = (index+1) + ' / ' + scenes.length;
+}
+
+// ─── Controls ───
+function getActiveViewer() { return activeLayer==='a' ? viewerA : viewerB; }
+
+function toggleRotate() {
+    var v = getActiveViewer(); if(!v) return;
+    var btn = document.getElementById('btn-rotate');
+    if (isRotating) { v.stopMovement(); isRotating=false; btn.classList.remove('active'); }
+    else { isRotating=true; btn.classList.add('active'); doAutoRotate(); }
+}
+function doAutoRotate() {
+    var v = getActiveViewer(); if(!isRotating||!v) return;
+    v.startMovement({yaw:360},120);
+    setTimeout(function(){if(isRotating)doAutoRotate();},200);
+}
+function toggleFullscreen() {
+    if(!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else document.exitFullscreen();
+}
+
+document.addEventListener('keydown', function(e) {
+    if(e.key==='ArrowRight'||e.key==='ArrowDown'){e.preventDefault();loadScene((currentIndex+1)%scenes.length);}
+    else if(e.key==='ArrowLeft'||e.key==='ArrowUp'){e.preventDefault();loadScene((currentIndex-1+scenes.length)%scenes.length);}
+    else if(e.key==='f'||e.key==='F') toggleFullscreen();
+    else if(e.key==='r'||e.key==='R') toggleRotate();
+});
+
+// ─── Visitor count ───
+var VISITED_KEY = 'sig-wall-visited';
+
+async function initVisitorCount() {
+    var el = document.getElementById('visitor-count');
+    var alreadyVisited = localStorage.getItem(VISITED_KEY) === '1';
+    if (useSupabase) {
+        try {
+            if (alreadyVisited) {
+                var res = await db.from('site_stats').select('value').eq('key', 'visitors').single();
+                if (res.data) { el.textContent = Number(res.data.value).toLocaleString(); return; }
+            } else {
+                var res2 = await db.rpc('increment_visitor');
+                if (!res2.error && res2.data !== null) {
+                    localStorage.setItem(VISITED_KEY, '1');
+                    el.textContent = Number(res2.data).toLocaleString();
+                    return;
+                }
+            }
+        } catch (e) { console.warn('Visitor count RPC failed:', e); }
+    }
+    var k = 'pv-' + location.hostname;
+    if (!alreadyVisited) {
+        var c = parseInt(localStorage.getItem(k) || '0') + 1;
+        localStorage.setItem(k, c.toString());
+        localStorage.setItem(VISITED_KEY, '1');
+        el.textContent = c.toLocaleString();
+    } else {
+        el.textContent = parseInt(localStorage.getItem(k) || '0').toLocaleString();
+    }
+}
+
+// ═══════════════════════════════════════════
+//  签名墙 — 纯 CSS 下落 + Canvas 星空背景
+//  参考 910.pages.dev 的实现方式
+// ═══════════════════════════════════════════
+
+var SIG_FALL_DUR = 10;   // 秒
+var SIG_SPAWN_INTERVAL = 2500; // 毫秒
+
+// ── 星空背景 ──
+function initStarsCanvas() {
+    var canvas = document.getElementById('sig-stars');
+    var ctx = canvas.getContext('2d');
+    var stars = [];
+    function resize() {
+        canvas.width = canvas.parentElement.clientWidth;
+        canvas.height = canvas.parentElement.clientHeight;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    for (var i = 0; i < 100; i++) {
+        stars.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            r: Math.random() * 1.5 + 0.3,
+            a: Math.random() * 0.5 + 0.2,
+            twinkleSpeed: Math.random() * 0.02 + 0.005,
+            twinklePhase: Math.random() * Math.PI * 2
+        });
+    }
+    function draw() {
+        if (!sigActive) return;
+        requestAnimationFrame(draw);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        var t = Date.now() * 0.001;
+        stars.forEach(function(s) {
+            var alpha = s.a + Math.sin(t * s.twinkleSpeed * 60 + s.twinklePhase) * 0.2;
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(200,220,255,' + Math.max(0, alpha) + ')';
+            ctx.fill();
+        });
+    }
+    draw();
+}
+
+// ── 生成一条飘落文字 ──
+function spawnFallingText(text) {
+    var scene = document.getElementById('sig-scene');
+    var el = document.createElement('div');
+    el.className = 'sig-fall';
+    el.textContent = text;
+
+    // 随机属性
+    var size = 16 + Math.random() * 14; // 16~30px
+    var left = 5 + Math.random() * 85;  // 5%~90%
+    var sway = (Math.random() - 0.5) * 60; // -30px ~ +30px
+    var opacity = 0.5 + Math.random() * 0.4;
+
+    el.style.fontSize = size + 'px';
+    el.style.left = left + '%';
+    el.style.setProperty('--fall-dur', SIG_FALL_DUR + 's');
+    el.style.setProperty('--sway', sway + 'px');
+    el.style.opacity = opacity;
+
+    scene.appendChild(el);
+
+    // 动画结束后移除
+    setTimeout(function() {
+        if (el.parentNode) el.parentNode.removeChild(el);
+    }, SIG_FALL_DUR * 1000 + 500);
+}
+
+// ── 循环生成 ──
+function startSigLoop() {
+    if (sigIntervalId) return;
+    sigActive = true;
+    initStarsCanvas();
+
+    // 立刻生成一条
+    if (sigMsgQueue.length > 0) spawnFallingText(sigMsgQueue.shift());
+
+    sigIntervalId = setInterval(function() {
+        if (sigMsgQueue.length === 0) {
+            // 重新填充队列
+            var src = (typeof sigLastMsgs !== 'undefined' && sigLastMsgs.length) ? sigLastMsgs : DEFAULT_SIG_MSGS;
+            sigMsgQueue = src.slice();
+            // 打乱
+            for (var k = sigMsgQueue.length - 1; k > 0; k--) {
+                var r = Math.floor(Math.random() * (k + 1));
+                var tmp = sigMsgQueue[k]; sigMsgQueue[k] = sigMsgQueue[r]; sigMsgQueue[r] = tmp;
+            }
+        }
+        if (sigMsgQueue.length > 0) spawnFallingText(sigMsgQueue.shift());
+    }, SIG_SPAWN_INTERVAL);
+}
+
+function stopSigLoop() {
+    sigActive = false;
+    if (sigIntervalId) { clearInterval(sigIntervalId); sigIntervalId = null; }
+}
+
+function rebuildSigTexts(msgs) {
+    sigLastMsgs = msgs;
+    var list = msgs.length > 0 ? msgs : DEFAULT_SIG_MSGS;
+    sigMsgQueue = list.slice();
+    // 打乱
+    for (var k = sigMsgQueue.length - 1; k > 0; k--) {
+        var r = Math.floor(Math.random() * (k + 1));
+        var tmp = sigMsgQueue[k]; sigMsgQueue[k] = sigMsgQueue[r]; sigMsgQueue[r] = tmp;
+    }
+}
+
+function initSigScene() {
+    console.log('[松莞全景] initSigScene()');
+    if (sigReady) { startSigLoop(); return; }
+    updateSigMsgs = rebuildSigTexts;
+    fetchMessages().then(function(msgs) { rebuildSigTexts(msgs); startSigLoop(); });
+    sigReady = true;
+}
+
+// ─── 违禁词过滤 ───
+var BANNED_WORDS = [
+    // 脏话 / 粗口
+    '操你','你妈','他妈','妈的','草泥马','尼玛','傻逼','牛逼','狗日','王八蛋','混蛋','滚蛋','贱人','婊子','妓女','荡妇','畜生','废物','白痴','智障','脑残','煞笔','傻b','nmsl','cnm','fuck','shit','bitch','asshole','dick','pussy','bastard','damn','wtf','stfu',
+    // 色情 / 低俗
+    '约炮','开房','援交','裸体','色情','黄片','av','自慰','性交','做爱','口交','肛交','sm','情趣用品','成人网站','裸聊','偷拍','淫荡','骚货','骚逼','阴茎','阴道','乳房','屁股',
+    // 政治敏感
+    '习近平','毛泽东','共产党','六四','天安门','法轮功','台独','藏独','疆独','港独','反华','颠覆','维权','上访','抗议','示威','游行','暴动','政变','独裁','专制','民主自由','翻墙','vpn','敏感词','审查','封杀',
+    // 毒品 / 违禁品
+    '冰毒','大麻','海洛因','摇头丸','k粉','可卡因','鸦片','吸毒','贩毒','制毒','嗑药','溜冰',
+    // 赌博
+    '赌博','赌钱','老虎机','百家乐','六合彩','时时彩','网赌','庄家','赌狗','赌鬼','菠菜','博彩',
+    // 诈骗 / 广告
+    '代开发票','办证','贷款','刷单','兼职','日赚','月入','暴利','传销','资金盘','庞氏','薅羊毛','割韭菜','杀猪盘','电信诈骗','网络诈骗','洗钱','银行卡出租','出租微信号','收卡','卖卡',
+    // 暴力 / 恐怖
+    '杀人','自杀','炸弹','恐袭','恐怖主义','枪支','贩卖人口','绑架','强奸','虐待','家暴',
+    // 歧视
+    '黑鬼','支那','白猪','低等','劣等','种族灭绝','纳粹','法西斯',
+    // 其他
+    '死全家','去死','不得好死','断子绝孙','天打雷劈','狗娘养','狗杂种','王八','龟儿子','兔崽子','小日本','印度阿三','韩国棒子','越南猴子'
+];
+
+function containsBanned(text) {
+    var lower = text.toLowerCase();
+    for (var i = 0; i < BANNED_WORDS.length; i++) {
+        if (lower.indexOf(BANNED_WORDS[i]) !== -1) return true;
+    }
+    return false;
+}
+
+// ─── Message form ───
+function showToast(msg) {
+    var t = document.getElementById('msg-toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(function() { t.classList.remove('show'); }, 1500);
+}
+
+async function submitMessage() {
+    var input = document.getElementById('msg-input');
+    var text = input.value.trim();
+    if (!text) return;
+    if (containsBanned(text)) {
+        showToast('⚠️ 包含违禁词，无法提交');
+        return;
+    }
+    input.disabled = true;
+    var ok = await insertMessage(text);
+    input.disabled = false;
+    if (ok) {
+        input.value = '';
+        var msgs = await fetchMessages();
+        if (updateSigMsgs) updateSigMsgs(msgs);
+        showToast('✓ 已添加');
+    }
+}
+
+document.getElementById('msg-submit').addEventListener('click', submitMessage);
+document.getElementById('msg-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); submitMessage(); }
+});
+
+// ─── Init ───
+(async function() {
+    await initScenes();
+    buildThumbs();
+    buildLoadItems();
+    loadAll();
+})();
+</script>
+</body>
+</html>
